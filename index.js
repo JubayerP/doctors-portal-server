@@ -6,6 +6,8 @@ const jwt = require('jsonwebtoken');
 const port = process.env.PORT || 5000;
 const app = express();
 
+const stripe = require('stripe')(process.env.STRIPE_SECRET)
+
 // Middlewares
 app.use(express.json())
 app.use(cors())
@@ -39,8 +41,9 @@ async function run() {
         const bookingCollection = client.db('doctorsPortal').collection('bookings')
         const userCollection = client.db('doctorsPortal').collection('users')
         const doctorsCollection = client.db('doctorsPortal').collection('doctors')
+        const paymentsCollection = client.db('doctorsPortal').collection('payments')
 
-        const verifyAdmin = async(req, res, next) => {
+        const verifyAdmin = async (req, res, next) => {
             console.log(req.decoded.email);
             const decodedEmail = req.decoded.email;
             const query = { email: decodedEmail };
@@ -66,6 +69,48 @@ async function run() {
                 // console.log(date, option.name, remainingSlots.length);
             })
             res.send(options);
+        })
+
+        // This is temporary api for update price
+        // app.put('/updatePrice', async (req, res) => {
+        //     const filter = {};
+        //     const options = { upsert: true }
+        //     const updatedDoc = {
+        //         $set: {
+        //             price: 99
+        //         }
+        //     }
+        //     const result = await appointmentOptionCollection.updateMany(filter, updatedDoc, options)
+        //     res.send(result)
+        // })
+
+        app.post('/create-payment-intent', async (req, res) => {
+            const price = req.body.price;
+            const amount = price * 100;
+            const paymentIntent = await stripe.paymentIntents.create({
+                currency: 'usd',
+                amount: amount,
+                'payment_method_types': [
+                    'card'
+                ]
+            })
+            res.send({ clientSecret: paymentIntent.client_secret })
+        })
+
+        app.post('/payments', async (req, res) => {
+            const payment = req.body;
+            const result = await paymentsCollection.insertOne(payment)
+            const id = payment.bookingId
+            const filter = {_id: ObjectId(id)}
+            const updatedDoc = {
+                $set: {
+                    paid: true,
+                    transactionId: payment.transactionId
+                }
+            }
+
+            const updatedResult = await bookingCollection.updateOne(filter, updatedDoc)
+            res.send(result)
         })
 
         app.post('/bookings', async (req, res) => {
@@ -98,6 +143,13 @@ async function run() {
             const query = { email: email }
             const bookings = await bookingCollection.find(query).toArray();
             res.send(bookings)
+        })
+
+        app.get('/bookings/:id', async (req, res) => {
+            const id = req.params.id;
+            const query = { _id: ObjectId(id) }
+            const booking = await bookingCollection.findOne(query)
+            res.send(booking)
         })
 
         app.post('/users', async (req, res) => {
